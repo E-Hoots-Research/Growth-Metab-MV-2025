@@ -1,0 +1,1110 @@
+---
+title: "Exploring metabolism-growth relationships within and across individual fish."
+author: "E. Hoots and P. Biro"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+##########################
+# READ ME
+##########################
+
+This R code is used to take raw respirometry slopes measured on *Galaxias maculatus* at Deakin's Marine Research Centre in Queenscliff, Victoria, Australia and calculate their standard, routine, and maximum metabolic rate. These metabolic measurements are made repeatedly on known individuals held under one of two temperature treatments (18°C or 23°C), and paired with repeated mass and length measurements over five month of data collection (May - September, 2023). After reading in all data, a multivariate mixed effects modeling approach is undertaken in order to assess covariance between growth and metabolism traits among- and within-individuals.
+
+##########################
+# CONTACT
+##########################
+
+Elizabeth C. Hoots
+
+Email: beth.hoots@research.deakin.edu.au
+
+GitHub: https://github.com/Bhoots99
+
+Web: https://elizabeth-hoots.owlstown.net/
+
+##########################
+# KNIT SETTINGS
+##########################
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+```
+
+##########################
+# LOAD REQUIRED PACKAGES
+##########################
+
+```{r, message=FALSE, results='hide'}
+# installs and loads packages, need to install "pacman" first
+
+pacman::p_load("brms",
+               "broom",
+               "broom.mixed",
+               "car",
+               "coda",
+               "dplyr",
+               "ggeffects",
+               "ggiraphExtra",
+               "ggplot2",
+               "ggpubr",
+               "hms",
+               "lme4",
+               "lmerTest",
+               "lubridate",
+               "nlme",
+               "posterior",
+               "readxl",
+               "tidyverse"
+)
+```
+
+
+## Working directories
+```{r}
+wd <- getwd() # getwd tells us what the current wd is, we are using this to drop it in a variable called wd
+
+raw_data_wd <- paste0(wd, "./00_raw_data")  # creates a variable with the name of the wd where raw data are stored
+
+    MRcalcs_wd <- paste0(raw_data_wd, "./MRcalcs")
+    
+    MR_slopes_wd <- paste0(raw_data_wd, "./MR_Slopes")
+    
+    MMR_wd <- paste0(raw_data_wd, "./MMR")
+
+metadata_wd <- paste0(wd, "./01_metadata")  # creates a variable with the name of the wd where metadata are stored
+
+figures_wd <- paste0(wd, "./03_figures")  # creates a variable with the name of the wd where figures are stored
+
+```
+
+
+# Read in data, calculate metabolic rates, merge into master data table
+
+```{r}
+
+#calcSMR script shamelessly stolen and adapted from Eirik (who shamelessly stole it from Chabot, 2016)
+
+calcSMR <- function(Y) {
+  u <- sort(Y)
+  tenpc <- round(0.1 * length(u))
+  SD10pc <- sd(u[1:tenpc])
+  low10pc = mean(u[(which((u > (mean(u[1:tenpc])-SD10pc)))):(tenpc+which((u > (mean(u[1:tenpc])-SD10pc -u[1]))))])
+  return(list(low10pc = low10pc))
+}
+
+# Define a function to extract date strings from file names
+extract_date <- function(files) {
+  gsub(".*?([0-9]{8}).*", "\\1", basename(files))
+}
+
+# Specify the directories where your files are located
+csv_folder <- MR_slopes_wd
+xlsx_folder <- MMR_wd
+
+# Get the list of files in each folder
+csv_files <- list.files(csv_folder, pattern = "_MR_slopes.csv", full.names = TRUE)
+xlsx_files <- list.files(xlsx_folder, pattern = "_MMR.xlsx", full.names = TRUE)
+
+
+# Extract date strings from file names
+csv_dates <- extract_date(csv_files)
+xlsx_dates <- extract_date(xlsx_files)
+
+
+matching_files <- Map(function(date) {
+  csv_file <- csv_files[grep(date, csv_dates)]
+  xlsx_file <- xlsx_files[grep(date, xlsx_dates)]
+  return(list(csv = csv_file, xlsx = xlsx_file))
+}, unique(c(csv_dates, xlsx_dates)))
+
+
+# Loop through matching files and perform your data processing
+for (i in seq_along(matching_files)) {
+  date <- unique(csv_dates)[i]
+  current_files <- matching_files[[i]]  # Renamed 'files' to 'current_files'
+  
+  # Process CSV data
+  tb_respirometry <- read_csv(current_files$csv) %>%
+    rename(
+      chamber_ch = Chamber.No,
+      ID_fish    = Ind,
+      mass       = Mass,
+      length     = Length,
+      volume_ch  = Ch.Volume,
+      DOunit     = DO.unit,
+      dateTime   = Date.Time,
+      Temp_class = Temp.class,
+      slope_wBR  = Slope.with.BR,
+      BRSlope    = BR.Slope
+    )  %>%
+    mutate(
+      dateTime       = as.POSIXct(ymd_hms(dateTime)),
+      Time           = as_hms(ymd_hms(dateTime)),
+      Date           = as.Date(dateTime, format = "%Y/%m/%d"),
+    )
+  
+  
+  tb_respirometry <- tb_respirometry %>%
+    mutate(
+      volume_net = volume_ch - mass,
+      MR_wBR     = abs(slope_wBR)*(volume_net/1000)*60*60, #uncomment for mgO2/hr instead
+      BR         = BRSlope*(volume_ch/1000)*60*60,
+      MR         = MR_wBR + BR,
+      BR_perc    = (BR/MR_wBR)*100
+    ) 
+  
+  #Calculate RMR and variance in MR for each fish, create a new table for individual RMR calcs 
+  
+  tb_rmr <- tb_respirometry %>%
+    group_by(chamber_ch) %>%
+    arrange(chamber_ch, dateTime) %>%
+    slice(3:(n() - 1)) %>%
+    ungroup()  %>%
+    group_by(
+      ID_fish, mass, length, volume_net, chamber_ch, Temp_class
+    ) %>% 
+    arrange(ID_fish) %>%
+    drop_na() %>%
+    summarise(
+      RMR        = mean(MR),
+      RMR_var    = var(MR),
+      RMR_perc   = (RMR_var/RMR)*100,
+      time_start = dateTime %>% min(),
+      time_end   = dateTime %>% max()
+    ) 
+  
+  #Calculate SMR for each fish, create a new table for individual SMR calcs 
+  
+  tb_smr <-
+    tb_respirometry %>%
+    group_by(
+      ID_fish, mass,length, volume_net, chamber_ch
+    ) %>% 
+    arrange(ID_fish) %>%
+    drop_na() %>%
+    summarise(
+      SMR        = calcSMR(MR)$low10pc %>% unname(),
+      time_start = dateTime %>% min(),
+      time_end   = dateTime %>% max()
+    ) 
+  
+    # Process XLSX data
+    tb_mmr <- read_excel(current_files$xlsx) %>%
+      rename(
+        chamber_ch = Chamber.No,
+        ID_fish    = Ind,
+        mass       = Mass,
+        volume_ch  = Ch.Volume,
+        DOunit     = DO.unit,
+        dateTime   = Date.Time,
+        Temp_class = Temp.class,
+        slope_wBR  = Slope.with.BR,
+        BRSlope    = BR.Slope
+      )  %>%
+      mutate(
+        dateTime       = as.POSIXct(ymd_hms(dateTime)),
+        Time           = as_hms(ymd_hms(dateTime)),
+        Date           = as.Date(dateTime, format = "%Y/%m/%d"),
+      ) %>%
+      drop_na()
+    
+    tb_mmr <- tb_mmr %>%
+      mutate(
+        volume_net = volume_ch - mass,
+        MMR_wBR    = abs(slope_wBR)*(volume_net/1000)*60*60, #uncomment for mgO2/hr instead
+        BR         = abs(BRSlope)*(volume_ch/1000)*60*60,
+        MMR        = MMR_wBR - BR,
+        BR_perc    = (BR/MMR_wBR)*100
+      ) %>%
+      arrange(ID_fish)
+      
+    # Combine the processed data
+    # Combine the processed data, selecting only specific columns
+    tb_MR_master <- tb_rmr %>%
+      left_join(select(tb_smr, ID_fish, SMR), by = "ID_fish") %>%
+      left_join(select(tb_mmr, ID_fish, MMR), by = "ID_fish") %>%
+      select(-matches(".x$")) %>%
+      rename_with(~gsub("\\.y$", "", .), matches(".y$"))
+    
+  # Export data
+  setwd(MRcalcs_wd)
+  write.csv(tb_MR_master, file = paste0(date, "_MRcalcs.csv"), col.names = NA, row.names = FALSE)
+}
+
+# read all "_MRcalcs.csv" files, bind into one table, and add columns with logged values 
+file.list <- list.files(MRcalcs_wd)
+
+setwd(MRcalcs_wd)
+calcs_all <- lapply(file.list, read_csv)
+
+tb_MRcalcs <- bind_rows(calcs_all, .id="Resp_Day") %>%
+  mutate(
+    log_SMR_low10pc = log10(SMR),
+    log_mass = log10(mass),
+    log_RMR = log10(RMR),
+    log_MMR = log10(MMR),
+    Resp_Day = as.numeric(Resp_Day)
+  )
+
+# assign Month category to all timepoints 
+tb_MRcalcs$Month <- cut(
+  tb_MRcalcs$Resp_Day,
+  breaks = c(0, 13, seq(23, max(tb_MRcalcs$Resp_Day) + 10, by = 10)),
+  right = FALSE,
+  labels = c("April", "May", "June", "July", "August", "September")
+)
+
+setwd(raw_data_wd)
+biometrics <- read.csv("FinalBiometrics.csv")
+
+ds <- left_join(tb_MRcalcs, biometrics, by = c("ID_fish")) #a table with all resp data and metadata collected in dissection
+
+ds1 <- ds[which(ds$Month != "April"),] # remove April data from analysis due to temperature inconsistency
+
+```
+
+
+# Multivariate mixed-effects models to test the relationships between growth and metabolism in </i>Galaxias maculatus<i/>.
+
+```{r}
+ds1 <- ds1 %>%
+  # Filter to keep only ID_fish where a mass exists for Month == "May"
+  filter(ID_fish %in% ID_fish[Month == "May" & !is.na(mass)])
+
+
+month_order <- c("May", "June", "July", "August", "September") # assign chronological order to Month (otherwise alphabetical)
+ds1$Month <- factor(ds1$Month, levels = month_order) # assign month_order to factor variable "Month" in ds1
+
+min_mass = min(ds1$mass)
+min_log_mass = min(ds1$log_mass)
+
+min_finalmass = min(((ds1[which(!is.na(ds1$Final_Mass_g)),]$Final_Mass_g)))
+min_log_finalmass = min((log10(ds1[which(!is.na(ds1$Final_Mass_g)),]$Final_Mass_g)))
+
+
+# format data columns and generate centred and log-scaled variables
+ds1 <- ds1 %>%
+  mutate(
+    mass_centre = mass - min_mass,                                  # centred mass  
+    log_mass_centre = log_mass - log10(min_mass),                   # log-scaled centred mass  
+    Temp_class = as.factor(Temp_class),                             # set temperature treatments as factors
+    SMR1 = log10(SMR),                                              # log-scaled SMR
+    RMR1 = log10(RMR),                                              # log-scaled RMR
+    MMR1 = log10(MMR),                                              # log-scaled MMR
+    mass1 = log_mass,                                               # log-scaled mass
+    Month_int = case_when(Month == "May" ~ 1,
+                          Month == "June" ~ 2,
+                          Month == "July" ~ 3,
+                          Month == "August" ~ 4,
+                          Month == "September" ~ 5),
+    Month_centred = Month_int - 1,                                  # left-centred mass such that May is the intercept
+    Month_centred_factor = as.factor(Month_centred),                # set centred month as factors
+    Rack = as.integer(Rack),                                        # set rack ID to integer (for now)
+    Bin = as.integer(Bin),                                          # set bin ID to integer (for now)
+    finalmass_centre = Final_Mass_g - min_finalmass,                # centre last mass measurement taken
+    log_finalmass_centre = log10(Final_Mass_g) - min_log_finalmass, # log-scaled and centred final mass
+    log_fatmass = log10(Fat_mass_g)                                 # log-scaled fat mass
+  )
+
+ds1 <- tidyr::unite(data = ds1, Rack, Bin, col = "tankID", sep = "_") # merge rack and bin data into one identifier, call it tankID
+
+#read in density data table, call it BinCounts
+setwd(raw_data_wd)
+BinCounts <- read_excel("BinCounts.xlsx", sheet = "data")
+
+#merge BinCounts and ds1
+ds1 <- left_join(ds1, BinCounts %>% dplyr::select("Month", "tankID", "Population"), by = c("Month", "tankID"))
+
+#reformat Sex variable so that both unknown and immature fish are "NA" 
+ds1$Sex <- ifelse(ds1$Sex == "I", NA, ds1$Sex)
+
+# rename "population" as density, set tankID as factor
+ds1 <- ds1 %>%
+  rename(
+    Density = Population
+  ) %>%
+  mutate(
+    tankID = as.factor(tankID)
+  )
+
+# check structure of ds1
+str(ds1)
+head(ds1)
+
+```
+
+##########################
+# GROWTH ANALYSES
+##########################
+
+## Visualize growth data
+
+```{r}
+
+hist(ds1$mass) # plot all mass values to see mass range and most frequent values
+
+ds1$Month <- factor(ds1$Month, levels = month_order)              # reassign month_order to factor variable "Month" in ds1
+
+# Plot mass over time, connect by ID_fish to show individual trends
+
+ggplot(ds1, aes(x = Month, y = mass, group = ID_fish)) +          # plot raw data by ID
+  geom_point(size = 2) +                                          # size of data points
+  geom_line() +                                                   # connect points by individual ID
+  facet_wrap(. ~ Temp_class) +                                    # produces one plot per temperature treatment
+  theme_bw()
+
+```
+
+
+## Log-linearize mass data
+
+We can also visualise this by plotting log10 mass over log10_x (note that we cannot use log10_y as some masses were < 1 initially)
+
+```{r}
+
+ggplot(ds1, aes(x = Month_int, y = log_mass, group = ID_fish)) +  # plot logged mass data by ID
+  geom_point(size = 2) +                                          # size of data points
+  geom_line() +                                                   # connect points by individual ID
+  facet_wrap(. ~ Temp_class) +                                    # produces one plot per temperature treatment
+  theme_bw() +
+  scale_x_log10()                                                 # display x-axis on log scale
+
+```
+
+## Univariate growth models for two temperature treatments
+
+```{r}
+ds18 <- ds1[which(ds1$Temp_class == "18"),]                   # subset ds for only fish at 18C
+ds23 <- ds1[which(ds1$Temp_class == "23"),]                   # subset ds for only fish at 23C
+
+mass18_mod<-lme4::lmer(log_mass ~ Month + (1 + Month_int|ID_fish), # model structure, 18C only
+           data=ds18, REML = T)
+
+summary(mass18_mod)                                 # generate model output
+plot(mass18_mod)                                    # residuals plot
+
+mass23_mod<-lme4::lmer(log_mass ~ Month + (1 + Month_int|ID_fish), # model structure, 23C only
+                 data=ds23, REML=T)
+
+summary(mass23_mod)                                 # generate model output
+plot(mass23_mod)                                    # residuals plot
+
+```
+
+## Combined growth model
+
+```{r}
+
+# mass model including both temperature treatments, and their interaction with Month
+mass_mod <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density + (1 + Month_int|ID_fish), 
+                 data=ds1, REML=T)
+
+summary(mass_mod)   # generate model output
+plot(mass_mod)      # residuals plot
+ranova(mass_mod)    # ANOVA table output to test random effects
+
+# mass model including both temperature treatments, and their interaction with Month
+mass_mod_noMonth <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density + (1|ID_fish), 
+                 data=ds1, REML=T)
+
+summary(mass_mod_noMonth)   # generate model output
+plot(mass_mod_noMonth)      # residuals plot
+ranova(mass_mod_noMonth)    # ANOVA table output to test random effects
+
+# mass model with random intercepts by temp treatment
+mass_mod_trtint <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density + (0 + Month_int|Temp_class), 
+                 data=ds1, REML=T)
+
+summary(mass_mod_trtint)   # generate model output
+plot(mass_mod_trtint)      # residuals plot
+ranova(mass_mod_trtint)    # ANOVA table output to test random effects
+
+```
+
+## Plot predicted mean level trend in mass over time, by temperature
+
+```{r}
+
+pred <- ggpredict(mass_mod, terms = c("Month", "Temp_class")) # generate trend lines for the two temperature treatments
+
+ggplot() +
+    geom_errorbar(
+      data = pred, 
+      aes(x=x, ymin = conf.low, ymax = conf.high, color = group, group = group), width = 0.2) +   # add 95% confidence interval bars
+  geom_point(
+    data = pred, 
+    aes(x = x, y = predicted, color = group, group = group)) +                                    # predicted level by temp*month
+  geom_line(
+    data = pred, 
+    aes(x = x, y = predicted, color = group, group = group)) +                                    # show level trend over time
+  labs(
+    x = "Month", 
+    y = "Predicted log_mass", 
+    color = "Temp_class") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00"))
+
+```
+
+## F test on interaction effect
+
+```{r}
+
+anova(mass_mod, type = "3") # type 3 anova because we expect a meaningful interaction
+
+```
+
+## Generate fitted data
+
+```{r}
+
+z_mass<-augment(mass_mod)                             # get variables and fitted values from model
+head(z_mass)
+
+##### check assumptions: plot all residual values against the fitted 
+ggplot(z_mass, aes(x = .fitted, y = .resid)) +   # same plot as before
+  geom_point(size = 2) 
+```
+
+
+##########################
+# FIGURE 1
+##########################
+
+
+```{r}
+
+fig1.1 <- ggplot(z_mass, aes(x = Month, y = log_mass, group = ID_fish)) + 
+  geom_line(aes(y = .fitted, color = `as.factor(Temp_class)`),             # note this will look odd if there are additional fixed effects      
+            alpha = 0.6) +
+  theme_classic() +
+  labs(x = "Month", y = expression(log[10]~(mass~(g))), color = expression("Temperature ("*degree*C*")")) +
+  ylim(-0.24,1) +
+  scale_color_manual(values  = c("#78B7C5", "#F21A00"))
+
+fig1.2 <- ggplot() +
+ geom_errorbar(
+      data = pred, 
+      aes(x=x, ymin = conf.low, ymax = conf.high, color = group, group = group), width = 0.2, alpha = 0.3) +      # add 95% confidence interval bars
+  geom_line(
+    data = pred, 
+    aes(x = x, y = predicted, color = group, group = group), 
+            size = 1) +
+  labs(
+    x = "Month", 
+    y = expression(log[10]~(mass~(g))), 
+    color = expression("Temperature ("*degree*C*")")) +
+  theme_classic() +
+  ylim(-0.24,1) +
+  scale_color_manual(values = c("#78B7C5", "#F21A00"))
+
+fig1 <- ggarrange(print(fig1.1 + rremove("xlab") + rremove ("ylab")), 
+                  print(fig1.2 + rremove("xlab") + rremove ("ylab")), 
+                           ncol = 2, nrow = 1, widths = c(1, 1.1),
+                           align = "v", 
+                           common.legend = TRUE, 
+                           legend = "right")
+
+require(grid)
+setwd(figures_wd)
+jpeg(file = "Fig1.jpeg", width=960, height=480, units = "px")
+annotate_figure(
+  fig1, 
+  bottom = textGrob("Month"),
+  left = textGrob(
+    expression(log[10]~(mass~(g))), 
+    rot = 90,          # Rotate the y-axis label 90 degrees
+    gp = gpar(fontsize = 12)  # Optionally adjust the font size
+  )
+)
+dev.off()
+
+
+```
+
+##########################
+# SMR MODEL
+##########################
+
+## Visualize SMR data
+
+```{r}
+
+hist(ds1$SMR)        # plot all raw SMR values in a histogram, note skewness
+hist(log10(ds1$SMR)) # plot all log-SMR values in a histogram
+
+ggplot(ds1, aes(x = mass, y = SMR, group = ID_fish)) +          # plot raw SMR data by ID against mass
+  geom_point(size = 2) +                                        # size of data points
+  facet_wrap(. ~ Temp_class) +                                  # produces one plot per temperature treatment
+  theme_bw() 
+
+```
+
+## Visualize log-mass and SMR relationship
+
+```{r}
+
+ggplot(ds1, aes(x = log_mass, y = SMR, group = ID_fish)) +          # plot raw SMR data by ID against log10(mass)
+  geom_point(size = 2) +                                            # size of data points
+  facet_wrap(. ~ Temp_class) +                                      # produces one plot per temperature treatment
+  theme_bw() 
+
+```
+
+Note that this relationship is non-linear, we expect this to be described by a power function y = a\*x\^b
+
+This reflects our understanding of the relationship between mass and metabolism, which can be described by the power function y = a\*x\^b
+
+```{r}
+
+ggplot(ds1, aes(x = log_mass, y = SMR, group = ID_fish)) +          # plot raw SMR data by ID against log10(mass)
+  geom_point(size = 2) +                                            # size of data points
+  facet_wrap(. ~ Temp_class) +                                      # produces one plot per temperature treatment
+  theme_bw() +
+  scale_y_log10()                                                   # plot data with log10 scaled y axis
+
+```
+
+The trends become linear when SMR is presented on log scale
+
+## Univariate SMR models for two temperature treatments
+
+```{r}
+
+# model structure using log10 SMR and mass for fish at 18C only
+SMR18_mod<-lmer(log10(SMR) ~ log_mass + (1 |ID_fish), # random slopes by month, random intercepts by ID_fish
+                 data=ds18, REML = T)
+
+summary(SMR18_mod)                                               # generate model output
+plot(SMR18_mod)                                                  # plot model residuals
+ranova(SMR18_mod)                                                # anova-like test shows insignificant random slopes
+
+SMR18_mod_1<-lmer(log10(SMR) ~ log_mass + (1 |ID_fish),          # random slopes term removed
+                 data=ds18, REML = T)
+
+summary(SMR18_mod_1)                                             # generate model output
+plot(SMR18_mod_1)                                                # plot model residuals
+ranova(SMR18_mod_1)                                              # anova-like test shows insignificant random intercepts, but retain in model for testing
+
+# model structure using log10 SMR and mass for fish at 23C only
+SMR23_mod<-lmer(log10(SMR) ~ log_mass + (1 + Month_int|ID_fish), # random slopes by month, random intercepts by ID_fish
+                 data=ds23, REML=T)
+
+summary(SMR23_mod)                                               # generate model output
+plot(SMR23_mod)                                                  # plot model residuals
+ranova(SMR23_mod)                                                # anova-like test shows insignificant random slopes
+
+SMR23_mod_1<-lmer(log10(SMR) ~ log_mass + (1 |ID_fish),          # random slopes term removed
+                 data=ds23, REML=T)
+
+summary(SMR23_mod_1)                                             # generate model output
+plot(SMR23_mod_1)                                                # plot model residuals
+ranova(SMR23_mod_1)                                              # anova-like test shows insignificant random intercepts, but retain in model for testing
+
+```
+
+## Combined SMR model 
+
+```{r}
+
+# model using log10 SMR and the interaction of log10 mass and temperature treatment
+SMR_mod <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1|ID_fish),  
+                 data=ds1, REML=T)
+plot(SMR_mod)                                             # generate model output
+summary(SMR_mod)                                          # plot model residuals
+ranova(SMR_mod)                                           # anova-like test for significance of model components
+
+# model using log10 SMR and the interaction of log10 mass and temperature treatment with test of random slopes by month
+SMR_mod_month <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 + Month_int|ID_fish),  
+                 data=ds1, REML=T)
+plot(SMR_mod_month)                                             # generate model output
+summary(SMR_mod_month)                                          # plot model residuals
+ranova(SMR_mod_month)                                           # anova-like test for significance of model components
+
+# model with random slopes by temp treatment
+SMR_mod_trt <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (0+Temp_class|ID_fish),  
+                 data=ds1, REML=T)
+
+plot(SMR_mod_trt)                                             # generate model output
+summary(SMR_mod_trt)                                          # plot model residuals
+ranova(SMR_mod_trt)                                           # anova-like test for significance of model components
+
+# model with random intercepts by temp treatment
+SMR_mod_trtint <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1|Temp_class),  
+                 data=ds1, REML=T)
+
+plot(SMR_mod_trtint)                                             # generate model output
+summary(SMR_mod_trtint)                                          # plot model residuals
+ranova(SMR_mod_trtint)                                           # anova-like test for significance of model components
+
+```
+
+Again, our ranova analysis shows that the random intercepts by ID_fish are not significant to this model. However, this will be retained because repeated measures were made on the same individuals, and so that the model can be included in the below covariance matrix.
+
+## Plot SMR vs. log mass mean predicted level
+
+```{r}
+
+pred_SMR <- ggpredict(SMR_mod, terms = c("log_mass", "Temp_class"))
+
+ggplot() +
+  geom_errorbar(data = pred_SMR, aes(x=x, ymin = conf.low, ymax = conf.high, color = group, group = group), width = 0.2) +   # add error bars showing 95% confidence intervals
+  geom_point(data = pred_SMR, aes(x = x, y = predicted, color = group, group = group)) +  
+  geom_line(data = pred_SMR, aes(x = x, y = predicted, color = group, group = group)) +
+  labs(x = "log_mass", y = "Predicted SMR", color = "Temp_class") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10() 
+
+
+```
+
+## F test on interaction effect
+
+```{r}
+
+anova(SMR_mod, type = "3")
+
+```
+
+## Generate fitted data
+
+```{r}
+
+z_SMR<-augment(SMR_mod)                             # get variables and fitted values from model
+head(z_SMR)
+z_SMR <- z_SMR %>% 
+  mutate(
+    pwr.fitted = 10^(.fitted)
+  )
+##### check assumptions: plot all residual values against the fitted 
+ggplot(z_SMR, aes(x = .fitted, y = .resid)) +   # same plot as before
+  geom_point(size = 2) 
+
+ggplot(z_SMR, aes(x = log_mass, y = SMR, group = ID_fish)) + 
+  geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
+            alpha = 0.6) +
+  theme_classic() +
+  scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
+  scale_y_log10()+
+  labs(x = expression(log[10]~(mass~(g))), y = expression(Fitted~SMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")"))
+
+```
+
+At this stage, we have found a strong model for SMR which captures variance by treatment and uses centered mass. The next step is to repeat this modeling approach for RMR and MMR.
+
+##########################
+# RMR MODEL
+##########################
+
+```{r}
+
+# model using log10 RMR and the interaction of log10 mass and temperature treatment
+RMR_mod <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 |ID_fish),  
+                 data=ds1, REML=T)
+plot(RMR_mod)
+summary(RMR_mod)
+ranova(RMR_mod)
+
+# model using log10 SMR and the interaction of log10 mass and temperature treatment with test of random slopes by month
+RMR_mod_month <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 + Month_int|ID_fish),  
+                 data=ds1, REML=T)
+plot(RMR_mod_month)                                             # generate model output
+summary(RMR_mod_month)                                          # plot model residuals
+ranova(RMR_mod_month)                                           # anova-like test for significance of model components
+
+# model with random intercepts by temp treatment
+RMR_mod_trtint <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1|Temp_class),  
+                 data=ds1, REML=T)
+plot(RMR_mod_trtint)
+summary(RMR_mod_trtint)
+ranova(RMR_mod_trtint)
+
+# model with random slopes by temp treatment
+RMR_mod_trt <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (0 + Temp_class|ID_fish),  
+                 data=ds1, REML=T)
+plot(RMR_mod_trt)
+summary(RMR_mod_trt)
+ranova(RMR_mod_trt)
+
+# plot RMR vs. log mass mean predicted level 
+
+pred_RMR <- ggpredict(RMR_mod, terms = c("log_mass", "Temp_class"))
+
+ggplot() +
+  geom_errorbar(data = pred_RMR, aes(x=x, ymin = conf.low, ymax = conf.high, color = group, group = group), width = 0.2) +   # add error bars showing 95% confidence intervals
+  geom_point(data = pred_RMR, aes(x = x, y = predicted, color = group, group = group)) +  
+  geom_line(data = pred_RMR, aes(x = x, y = predicted, color = group, group = group)) +
+  labs(x = "log_mass_centre", y = "Predicted RMR", color = "Temp_class") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10() 
+
+# plot the raw data as a cloud around the predictions
+
+ggplot() +
+  geom_point(data = ds1, aes(x = log_mass, y = RMR, group = factor(Temp_class), color = factor(Temp_class)), 
+             alpha = 0.3, position = position_jitter(width = 0.1)) +
+  geom_point(data = pred_RMR, aes(x = x, y = predicted, color = group, group = group), 
+             size = 3) +
+  geom_line(data = pred_RMR, aes(x = x, y = predicted, color = group, group = group), 
+            size = 2) +
+  labs(x = "log_mass_centre", y = "Predicted RMR", color = "Temp_class") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10() 
+
+# F test on interaction effect
+
+anova(RMR_mod, type = "3")
+
+# generate fitted data
+
+z_RMR<-augment(RMR_mod)                                            # get variables and fitted values from model
+head(z_RMR)
+
+z_RMR <- z_RMR %>% 
+  mutate(
+    pwr.fitted = 10^(.fitted)
+  )
+
+# check assumptions: plot all residual values against the fitted 
+
+ggplot(z_RMR, aes(x = .fitted, y = .resid)) +                      # same plot as before
+  geom_point(size = 2) 
+
+ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) + 
+  geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      
+            alpha = 0.6) +
+  theme_bw() +
+  scale_y_log10() +
+  scale_color_manual(values  = c("#78B7C5", "#F21A00"))
+
+
+```
+
+##########################
+# MMR MODEL 
+##########################
+
+```{r}
+
+# model using log10 MMR and the interaction of log10 mass and temperature treatment
+
+MMR_mod <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 |ID_fish),  
+                 data=ds1, REML=T)
+
+plot(MMR_mod)
+summary(MMR_mod) 
+ranova(MMR_mod)
+
+# model using log10 SMR and the interaction of log10 mass and temperature treatment with test of random slopes by month
+MMR_mod_month <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 + Month_int|ID_fish),  
+                 data=ds1, REML=T)
+plot(MMR_mod_month)                                             # generate model output
+summary(MMR_mod_month)                                          # plot model residuals
+ranova(MMR_mod_month)                                           # anova-like test for significance of model components
+
+# model with random intercepts by temp treatment
+MMR_mod_trtint <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1|Temp_class),  
+                 data=ds1, REML=T)
+
+plot(MMR_mod_trtint)
+summary(MMR_mod_trtint) 
+ranova(MMR_mod_trtint)
+
+# model with random slopes by temp treatment
+MMR_mod_trt <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (0 + Temp_class|ID_fish),  
+                 data=ds1, REML=T)
+
+plot(MMR_mod_trt)
+summary(MMR_mod_trt) 
+ranova(MMR_mod_trt)
+
+# plot MMR vs. log mass mean predicted level
+
+pred_MMR <- ggpredict(MMR_mod, terms = c("log_mass", "Temp_class"))
+
+ggplot() +
+  geom_errorbar(data = pred_MMR, aes(x=x, ymin = conf.low, ymax = conf.high, color = group, group = group), width = 0.2) +   # add error bars showing 95% confidence intervals
+  geom_point(data = pred_MMR, aes(x = x, y = predicted, color = group, group = group)) +  
+  geom_line(data = pred_MMR, aes(x = x, y = predicted, color = group, group = group)) +
+  labs(x = "log_mass", y = "Predicted MMR", color = "Temp_class") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10() 
+
+# Plot the raw data as a cloud around the predictions
+ggplot() +
+  geom_point(data = ds1, aes(x = log_mass, y = MMR, group = factor(Temp_class), color = factor(Temp_class)), 
+             alpha = 0.3, position = position_jitter(width = 0.1)) +
+  geom_point(data = pred_MMR, aes(x = x, y = predicted, color = group, group = group), 
+             size = 3) +
+  geom_line(data = pred_MMR, aes(x = x, y = predicted, color = group, group = group), 
+            size = 2) +
+  labs(x = "log_mass_centre", y = "Predicted MMR", color = "Temp_class") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10() 
+
+# F test on interaction effect
+
+anova(MMR_mod, type = "3")
+
+# Generate fitted data
+
+z_MMR<-augment(MMR_mod)                             # get variables and fitted values from model
+head(z_MMR)
+
+z_MMR <- z_MMR %>% 
+  mutate(
+    pwr.fitted = 10^(.fitted)
+  )
+
+# check assumptions: plot all residual values against the fitted 
+ggplot(z_MMR, aes(x = .fitted, y = .resid)) +       # same plot as before
+  geom_point(size = 2) 
+
+ggplot(z_MMR, aes(x = log_mass, y = MMR, group = ID_fish)) + 
+  geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),            
+            alpha = 0.6) +
+  theme_bw() +
+  scale_y_log10()+
+  scale_color_manual(values  = c("#78B7C5", "#F21A00"))
+
+```
+
+
+##########################
+# FIGURE 2
+##########################
+
+Generate a figure that displays mass-scaling relationships for all three metabolic rates at both temperatures
+
+```{r}
+
+### FIG. 2 ###
+
+fig2.1 <- ggplot() +
+    geom_ribbon(data = pred_SMR, aes(x=x, ymin = conf.low, ymax = conf.high, fill = group, color = group, group = group), width = 0.2, alpha = 0.1) +   # add error bars showing 95% confidence intervals
+  geom_line(data = pred_SMR, aes(x = x, y = predicted, color = group, group = group), 
+            size = 1) +
+  geom_point(data = ds1, aes(x = log_mass, y = SMR, group = factor(Temp_class), color = factor(Temp_class)), 
+             alpha = 0.25, position = position_jitter(width = 0.1)) +
+  labs(x = "log10(mass (g))", y = expression(SMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")")) +
+  theme_classic() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_fill_manual(values = c("#78B7C5", "#F21A00"), guide = "none") +
+  xlim(-0.25, 1.1) +
+ scale_y_log10(limits = c(0.15, 1.6))
+
+fig2.2 <- ggplot() +
+    geom_ribbon(data = pred_RMR, aes(x=x, ymin = conf.low, ymax = conf.high, fill = group, color = group, group = group), width = 0.2, alpha = 0.1) +   # add error bars showing 95% confidence intervals
+  geom_line(data = pred_RMR, aes(x = x, y = predicted, color = group, group = group), 
+            size = 1) +
+  geom_point(data = ds1, aes(x = log_mass, y = RMR, group = factor(Temp_class), color = factor(Temp_class)), 
+             alpha = 0.25, position = position_jitter(width = 0.1)) +
+  labs(x = "log10(mass (g))", y = expression(RMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")")) +
+  theme_classic() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_fill_manual(values = c("#78B7C5", "#F21A00"), guide = "none") +
+  xlim(-0.25, 1.1) +
+  scale_y_log10(limits=c(0.25,2.1))
+
+fig2.3 <- ggplot() +
+    geom_ribbon(data = pred_MMR, aes(x=x, ymin = conf.low, ymax = conf.high, fill = group, color = group, group = group), width = 0.2, alpha = 0.1) +   # add error bars showing 95% confidence intervals
+  geom_line(data = pred_MMR, aes(x = x, y = predicted, color = group, group = group), 
+            size = 1) +
+  geom_point(data = ds1, aes(x = log_mass, y = MMR, group = factor(Temp_class), color = factor(Temp_class)), 
+             alpha = 0.25, position = position_jitter(width = 0.1)) +
+  labs(x = expression(log[10]~(mass~(g))), y = expression(MMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")")) +
+  theme_classic() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_fill_manual(values = c("#78B7C5", "#F21A00"), guide = "none") +
+  xlim(-0.25, 1.1) +
+  scale_y_log10(limits=c(0.5, 5))
+
+fig2.4 <- ggplot(z_SMR, aes(x = log_mass, y = SMR, group = ID_fish)) + 
+  geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
+            alpha = 0.6) +
+  theme_classic() +
+  scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
+  scale_y_log10(limits = c(0.15, 1.6))+
+  xlim(-0.25, 1.1) +
+  labs(x = expression(log[10]~(mass~(g))), y = expression(Fitted~SMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")"))
+
+
+fig2.5 <- ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) + 
+  geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
+            alpha = 0.6) +
+  theme_classic() +
+  scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
+  scale_y_log10(limits=c(0.25,2.1))+
+  xlim(-0.25, 1.1) +
+  labs(x = expression(log[10]~(mass~(g))), y = expression(Fitted~RMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")"))
+
+fig2.6 <- ggplot(z_MMR, aes(x = log_mass, y = MMR, group = ID_fish)) + 
+  geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
+            alpha = 0.6) +
+  theme_classic() +
+  scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
+  scale_y_log10(limits=c(0.5, 5))+
+  xlim(-0.25, 1.1) +
+  labs(x = expression(log[10]~(mass~(g))), y = expression(Fitted~MMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")"))
+
+library(ggpubr)
+
+fig2 <- ggarrange(print(fig2.1 + rremove("xlab")), 
+                  print(fig2.2 + rremove("xlab")), 
+                  print(fig2.3 + rremove("xlab")),
+                  print(fig2.4 + rremove("xlab") + rremove("ylab")),
+                  print(fig2.5 + rremove("xlab") + rremove("ylab")),
+                  print(fig2.6 + rremove("xlab") + rremove("ylab")),
+                           ncol = 3, nrow = 2, widths = c(5, 5, 5),
+                           align = "v", 
+                           common.legend = TRUE, 
+                           legend = "right")
+
+require(grid)
+setwd(figures_wd)
+jpeg(file = "Fig2.jpeg", width = 1440, height=960, units = "px")
+annotate_figure(fig2, bottom = textGrob(expression(log[10]~(mass~(g))), gp = gpar(cex = 1.1)))
+dev.off()
+
+```
+
+##########################
+# UNIVARIATE MODEL OF FAT MASS
+##########################
+
+```{r}
+
+#subset ds1 to only include fish for which fat mass was measured
+ds_fat <- ds1[which(!is.na(ds1$log_fatmass)),]
+
+fat_mod <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + Sex + Density, data=ds_fat)
+
+fat_mod1 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + SMR:Temp_class + Sex + Density, data=ds_fat)
+
+fat_mod2 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + RMR:Temp_class + Sex + Density, data=ds_fat)
+
+fat_mod3 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + MMR:Temp_class + Sex + Density, data=ds_fat)
+
+summary(fat_mod)   # generate model output
+plot(fat_mod)      # residuals plot
+
+summary(fat_mod1)   # generate model output
+plot(fat_mod)      # residuals plot
+
+summary(fat_mod2)   # generate model output
+plot(fat_mod)      # residuals plot
+
+summary(fat_mod3)   # generate model output
+plot(fat_mod)      # residuals plot
+
+pred_fat <- ggpredict(fat_mod, terms = c("log_finalmass_centre", "Temp_class"))
+
+# Plot the raw data
+ggplot() +
+  geom_point(data = ds_fat, aes(x = log_finalmass_centre, y = log_fatmass, group = factor(Temp_class), color = factor(Temp_class))) +
+  geom_line(data = pred_fat, aes(x = x, y = predicted, color = group, group = group)) +
+  labs(x = expression(log[10]~(centred~mass~(g))), y = expression(log[10]~(fat~mass~(g))), color = expression("Temperature ("*degree*C*")")) +
+  theme_classic() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) 
+
+# F test on interaction term
+anova(fat_mod)
+anova(fat_mod1)
+anova(fat_mod2)
+anova(fat_mod3)
+
+
+```
+
+This model is excluded from the following covariance matrix because we were only able to collect one measurement of fat mass from each fish, all at the very end of the experiment. Without an initial measurement of fat mass (logistically impossible as it was a lethal measurement), we are unable to assess within-subject residual correlation. For this reason, we have assessed it separately.
+
+
+
+##########################
+# COVARIANCE MATRIX
+########################## 
+
+## build covariance matrix with brms
+
+```{r}
+
+RN <- bf(mass1 ~ 0 + Temp_class + Month_centred_factor:Temp_class + Sex + Density + (1 + Month_centred |a| ID_fish)) +
+      bf(SMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) +
+      bf(RMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) +
+      bf(MMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) +
+      set_rescor(T)
+
+prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
+            set_prior("cauchy(0,2)", class = "sd", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
+            set_prior("lkj(2)", class = "cor"))
+
+ fit1 <- brm(formula = RN, 
+            data = ds1, 
+            prior = prior1, 
+            seed = 42, warmup = 500, iter = 10000, chains = 4, cores = 4,
+            control=list(adapt_delta=0.97, max_treedepth = 15),
+            save_ranef = T
+           )
+
+print(fit1, digits = 3)
+plot(fit1)
+conditional_effects(fit1)
+
+```
+
+##########################
+# REPEATABILITY ESTIMATES
+##########################
+
+Use posterior distribution to generate repeatability estimates
+
+```{r}
+
+View(posterior::summarise_draws(as_draws_array(fit1))) # view all predicted values of random effects
+
+# random effects are fitted as standard dev, not variance, so we need to square them first
+# var names to insert below: SMR, RMR, MMR, growth
+
+# SMR repeatability
+
+Vint_SMR <- (as_draws_array(fit1, variable = "sd_ID_fish__SMR1_Intercept"))^2
+Vresid_SMR <- (as_draws_array(fit1, variable = "sigma_SMR1"))^2
+R_SMR <- Vint_SMR / (Vint_SMR + Vresid_SMR)
+
+"SMR"; mean(R_SMR); quantile(R_SMR, probs = c(0.025, 0.975))
+
+# RMR repeatability
+
+Vint_RMR <- (as_draws_array(fit1, variable = "sd_ID_fish__RMR1_Intercept"))^2
+Vresid_RMR <- (as_draws_array(fit1, variable = "sigma_RMR1"))^2
+R_RMR <- Vint_RMR / (Vint_RMR + Vresid_RMR)
+
+"RMR"; mean(R_RMR); quantile(R_RMR, probs = c(0.025, 0.975))
+
+# MMR repeatability
+
+Vint_MMR <- (as_draws_array(fit1, variable = "sd_ID_fish__MMR1_Intercept"))^2
+Vresid_MMR <- (as_draws_array(fit1, variable = "sigma_MMR1"))^2
+R_MMR <- Vint_MMR / (Vint_MMR + Vresid_MMR)
+
+"MMR"; mean(R_MMR); quantile(R_MMR, probs = c(0.025, 0.975))
+
+# Growth rate repeatability
+
+Vint_growth <- (as_draws_array(fit1, variable = "sd_ID_fish__mass1_Month_centred"))^2
+Vresid_growth <- (as_draws_array(fit1, variable = "sigma_mass1"))^2
+R_growth <- Vint_growth / (Vint_growth + Vresid_growth)
+
+"Growth"; mean(R_growth); quantile(R_growth, probs = c(0.025, 0.975))
+```
