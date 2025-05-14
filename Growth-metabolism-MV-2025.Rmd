@@ -23,11 +23,14 @@ GitHub: https://github.com/Bhoots99
 
 Web: https://elizabeth-hoots.owlstown.net/
 
-##########################
-# KNIT SETTINGS
-##########################
+
+
+
 
 ```{r setup, include=FALSE}
+
+# KNIT SETTINGS
+
 knitr::opts_chunk$set(
 	echo = TRUE,
 	message = FALSE,
@@ -79,7 +82,7 @@ raw_data_wd <- paste0(wd, "./00_raw_data")  # creates a variable with the name o
 
 metadata_wd <- paste0(wd, "./01_metadata")  # creates a variable with the name of the wd where metadata are stored
 
-figures_wd <- paste0(wd, "./03_figures")  # creates a variable with the name of the wd where figures are stored
+figures_wd <- paste0(wd, "./03_figures")  # creates a variable with the name of the wd where figures are to be stored
 
 ```
 
@@ -88,7 +91,8 @@ figures_wd <- paste0(wd, "./03_figures")  # creates a variable with the name of 
 
 ```{r}
 
-#calcSMR script shamelessly stolen and adapted from Eirik (who shamelessly stole it from Chabot, 2016)
+#calcSMR function adapted from Chabot, 2016 (https://doi.org/10.1111/jfb.12845)
+#note that we have not used the mlnd function as the mean of the lowest 10th percentile was better suited to our data
 
 calcSMR <- function(Y) {
   u <- sort(Y)
@@ -270,7 +274,7 @@ ds1 <- ds[which(ds$Month != "April"),] # remove April data from analysis due to 
 ```
 
 
-# Multivariate mixed-effects models to test the relationships between growth and metabolism in </i>Galaxias maculatus<i/>.
+# Multivariate mixed-effects models to test the relationships between growth and metabolism in *Galaxias maculatus*.
 
 ```{r}
 ds1 <- ds1 %>%
@@ -303,7 +307,7 @@ ds1 <- ds1 %>%
                           Month == "July" ~ 3,
                           Month == "August" ~ 4,
                           Month == "September" ~ 5),
-    Month_centred = Month_int - 1,                                  # left-centred mass such that May is the intercept
+    Month_centred = Month_int - 1,                                  # left-centred mass so May is the intercept
     Month_centred_factor = as.factor(Month_centred),                # set centred month as factors
     Rack = as.integer(Rack),                                        # set rack ID to integer (for now)
     Bin = as.integer(Bin),                                          # set bin ID to integer (for now)
@@ -512,6 +516,18 @@ fig1 <- ggarrange(print(fig1.1 + rremove("xlab") + rremove ("ylab")),
                            legend = "right")
 
 require(grid)
+
+jpeg(file = "Fig1.jpeg", width=960, height=480, units = "px")
+annotate_figure(
+  fig1, 
+  bottom = textGrob("Month"),
+  left = textGrob(
+    expression(log[10]~(mass~(g))), 
+    rot = 90,          # Rotate the y-axis label 90 degrees
+    gp = gpar(fontsize = 12)  # Optionally adjust the font size
+  )
+)
+
 setwd(figures_wd)
 jpeg(file = "Fig1.jpeg", width=960, height=480, units = "px")
 annotate_figure(
@@ -972,6 +988,8 @@ fig2 <- ggarrange(print(fig2.1 + rremove("xlab")),
                            legend = "right")
 
 require(grid)
+annotate_figure(fig2, bottom = textGrob(expression(log[10]~(mass~(g))), gp = gpar(cex = 1.1)))
+
 setwd(figures_wd)
 jpeg(file = "Fig2.jpeg", width = 1440, height=960, units = "px")
 annotate_figure(fig2, bottom = textGrob(expression(log[10]~(mass~(g))), gp = gpar(cex = 1.1)))
@@ -1101,10 +1119,39 @@ R_MMR <- Vint_MMR / (Vint_MMR + Vresid_MMR)
 "MMR"; mean(R_MMR); quantile(R_MMR, probs = c(0.025, 0.975))
 
 # Growth rate repeatability
-
 Vint_growth <- (as_draws_array(fit1, variable = "sd_ID_fish__mass1_Month_centred"))^2
+Vslope_growth <- (as_draws_array(fit1, variable = "sd_ID_fish__mass1_Intercept"))^2
+corr_growth <- (as_draws_array(fit1, variable = "cor_ID_fish__mass1_Intercept__mass1_Month_centred"))
 Vresid_growth <- (as_draws_array(fit1, variable = "sigma_mass1"))^2
-R_growth <- Vint_growth / (Vint_growth + Vresid_growth)
+COVis_growth <- corr_growth*sqrt(Vslope_growth)*sqrt(Vint_growth)
 
-"Growth"; mean(R_growth); quantile(R_growth, probs = c(0.025, 0.975))
+x<- 0 #(can be 0 - 4)
+VAR0 <- Vint_growth +2*COVis_growth*x + Vslope_growth*(x^2)
+R0_growth <- VAR0/(VAR0 + Vresid_growth)
+
+"Growth - May"; mean(R0_growth); quantile(R0_growth, probs = c(0.025, 0.975))
+
+x<- 1 #(can be 0 - 4)
+VAR1 <- Vint_growth +2*COVis_growth*x + Vslope_growth*(x^2)
+R1_growth <- VAR1/(VAR1 + Vresid_growth)
+
+"Growth - June"; mean(R1_growth); quantile(R1_growth, probs = c(0.025, 0.975))
+
+x<- 2 #(can be 0 - 4)
+VAR2 <- Vint_growth +2*COVis_growth*x + Vslope_growth*(x^2)
+R2_growth <- VAR2/(VAR2 + Vresid_growth)
+
+"Growth - July"; mean(R2_growth); quantile(R2_growth, probs = c(0.025, 0.975))
+
+x<- 3 #(can be 0 - 4)
+VAR3 <- Vint_growth +2*COVis_growth*x + Vslope_growth*(x^2)
+R3_growth <- VAR3/(VAR3 + Vresid_growth)
+
+"Growth - August"; mean(R3_growth); quantile(R3_growth, probs = c(0.025, 0.975))
+
+x<- 4 #(can be 0 - 4)
+VAR4 <- Vint_growth +2*COVis_growth*x + Vslope_growth*(x^2)
+R4_growth <- VAR4/(VAR4 + Vresid_growth)
+
+"Growth - September"; mean(R4_growth); quantile(R4_growth, probs = c(0.025, 0.975))
 ```
