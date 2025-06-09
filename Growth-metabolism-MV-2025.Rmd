@@ -2,18 +2,41 @@
 title: "Exploring metabolism-growth relationships within and across individual fish."
 author: "E. Hoots and P. Biro"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+html_document:
+code_download: true
+code_folding: hide
+depth: 4
+number_sections: no
+theme: cosmo
+toc: yes
+toc_float: yes
+toc_depth: 4
+knit: |
+  (function(input, ...) {
+    output_path <- rmarkdown::render(
+      input,
+      output_file = 'index.html',
+      envir = globalenv()
+    )
+    file.copy(output_path, "supplementary-file-1.html", overwrite = TRUE)
+    output_path
+  })
 ---
 
-##########################
+<!----------------------------->
+
 # READ ME
-##########################
+
+<!----------------------------->
 
 This R code is used to take raw respirometry slopes measured on *Galaxias maculatus* at Deakin's Marine Research Centre in Queenscliff, Victoria, Australia and calculate their standard, routine, and maximum metabolic rate. These metabolic measurements are made repeatedly on known individuals held under one of two temperature treatments (18°C or 23°C), and paired with repeated mass and length measurements over five month of data collection (May - September, 2023). After reading in all data, a multivariate mixed effects modeling approach is undertaken in order to assess covariance between growth and metabolism traits among- and within-individuals.
 
-##########################
+<!----------------------------->
+
 # CONTACT
-##########################
+
+<!----------------------------->
 
 Elizabeth C. Hoots
 
@@ -39,9 +62,11 @@ knitr::opts_chunk$set(
 
 ```
 
-##########################
+<!----------------------------->
+
 # LOAD REQUIRED PACKAGES
-##########################
+
+<!----------------------------->
 
 ```{r, message=FALSE, results='hide'}
 # installs and loads packages, need to install "pacman" first
@@ -343,9 +368,11 @@ head(ds1)
 
 ```
 
-##########################
+<!----------------------------->
+
 # GROWTH ANALYSES
-##########################
+
+<!----------------------------->
 
 ## Visualize growth data
 
@@ -477,9 +504,11 @@ ggplot(z_mass, aes(x = .fitted, y = .resid)) +   # same plot as before
 ```
 
 
-##########################
+<!----------------------------->
+
 # FIGURE 1
-##########################
+
+<!----------------------------->
 
 
 ```{r}
@@ -544,9 +573,11 @@ dev.off()
 
 ```
 
-##########################
+<!----------------------------->
+
 # SMR MODEL
-##########################
+
+<!----------------------------->
 
 ## Visualize SMR data
 
@@ -715,9 +746,11 @@ ggplot(z_SMR, aes(x = log_mass, y = SMR, group = ID_fish)) +
 
 At this stage, we have found a strong model for SMR which captures variance by treatment and uses centered mass. The next step is to repeat this modeling approach for RMR and MMR.
 
-##########################
+<!----------------------------->
+
 # RMR MODEL
-##########################
+
+<!----------------------------->
 
 ```{r}
 
@@ -805,9 +838,11 @@ ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) +
 
 ```
 
-##########################
+<!----------------------------->
+
 # MMR MODEL 
-##########################
+
+<!----------------------------->
 
 ```{r}
 
@@ -897,9 +932,11 @@ ggplot(z_MMR, aes(x = log_mass, y = MMR, group = ID_fish)) +
 ```
 
 
-##########################
+<!----------------------------->
+
 # FIGURE 2
-##########################
+
+<!----------------------------->
 
 Generate a figure that displays mass-scaling relationships for all three metabolic rates at both temperatures
 
@@ -997,9 +1034,11 @@ dev.off()
 
 ```
 
-##########################
+<!----------------------------->
+
 # UNIVARIATE MODEL OF FAT MASS
-##########################
+
+<!----------------------------->
 
 ```{r}
 
@@ -1049,9 +1088,11 @@ This model is excluded from the following covariance matrix because we were only
 
 
 
-##########################
+<!----------------------------->
+
 # COVARIANCE MATRIX
-########################## 
+
+<!----------------------------->
 
 ## build covariance matrix with brms
 
@@ -1081,9 +1122,11 @@ conditional_effects(fit1)
 
 ```
 
-##########################
+<!----------------------------->
+
 # REPEATABILITY ESTIMATES
-##########################
+
+<!----------------------------->
 
 Use posterior distribution to generate repeatability estimates
 
