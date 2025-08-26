@@ -513,12 +513,10 @@ summary(mass_mod_trtint)   # generate model output
 plot(mass_mod_trtint)      # residuals plot
 ranova(mass_mod_trtint)    # ANOVA table output to test random effects
 
-mass_mod_sex <- lmer(log_mass ~ Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*Month + (1 + Month_int|ID_fish), 
+mass_mod_sex <- lmer(log_mass ~ 0 + as.factor(Sex):as.factor(Temp_class) + as.factor(Sex):as.factor(Temp_class):Month + Density + (1 + Month_int|ID_fish), 
                  data=ds1, REML=T)
 summary(mass_mod_sex)
 plot(mass_mod_sex)
-ranova(mass_mod_sex)
-
 
 ```
 
@@ -757,11 +755,11 @@ ranova(SMR_mod_trtint)                                           # anova-like te
 
 # test sex terms for model inclusion
 
-SMR_mod_sex <- lmer(log10(SMR) ~ Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + (1 |ID_fish),  
+SMR_mod_sex <- lmer(log10(SMR) ~ 0 + as.factor(Sex):as.factor(Temp_class) + as.factor(Sex):as.factor(Temp_class):log_mass + Density + (1 |ID_fish),  
                  data=ds1, REML=T)
 plot(SMR_mod_sex)
 summary(SMR_mod_sex)
-ranova(SMR_mod_sex)
+
 ```
 
 Again, our ranova analysis shows that the random intercepts by ID_fish are not significant to this model. However, this will be retained because repeated measures were made on the same individuals, and so that the model can be included in the below covariance matrix.
@@ -856,11 +854,10 @@ ranova(RMR_mod_trt)
 
 # test sex terms for model inclusion
 
-RMR_mod_sex <- lmer(log10(RMR) ~ Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + (1 |ID_fish),  
+RMR_mod_sex <- lmer(log10(RMR) ~ 0 + as.factor(Sex):as.factor(Temp_class) + as.factor(Sex):as.factor(Temp_class):log_mass + Density + (1 |ID_fish),  
                  data=ds1, REML=T)
 plot(RMR_mod_sex)
 summary(RMR_mod_sex)
-ranova(RMR_mod_sex)
 
 # plot RMR vs. log mass mean predicted level 
 
@@ -928,7 +925,7 @@ ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) +
 
 # model using log10 MMR and the interaction of log10 mass and temperature treatment
 
-MMR_mod <- lmer(log10(MMR) ~ 0 + log_mass*as.factor(Temp_class) + as.factor(Sex) + Density + (1 |ID_fish),  
+MMR_mod <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 |ID_fish),  
                  data=ds1, REML=T)
 
 plot(MMR_mod)
@@ -1220,7 +1217,7 @@ prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR
  fit0 <- brm(formula = RN, 
             data = ds1, 
             prior = prior1, 
-            seed = 42, warmup = 500, iter = 2000, chains = 4, cores = 4,
+            seed = 42, warmup = 500, iter = 6000, chains = 4, cores = 4,
             control=list(adapt_delta=0.97, max_treedepth = 15),
             save_ranef = T
            )
