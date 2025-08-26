@@ -310,6 +310,8 @@ ds1 <- ds1 %>%
 month_order <- c("May", "June", "July", "August", "September") # assign chronological order to Month (otherwise alphabetical)
 ds1$Month <- factor(ds1$Month, levels = month_order) # assign month_order to factor variable "Month" in ds1
 
+month_order_pop <- c("April", "May", "June", "July", "August", "September") # assign chronological order to Month (otherwise alphabetical)
+
 min_mass = min(ds1$mass)
 min_log_mass = min(ds1$log_mass)
 
@@ -347,6 +349,22 @@ ds1 <- tidyr::unite(data = ds1, Rack, Bin, col = "tankID", sep = "_") # merge ra
 setwd(raw_data_wd)
 BinCounts <- read_excel("BinCounts.xlsx", sheet = "data")
 
+tb_density <- BinCounts %>% 
+  group_by_(
+    "Month",
+    "Rack") %>% 
+  summarise(
+    Population = sum(Population_tagged)) %>% 
+  mutate(
+    Month = factor(Month, levels = month_order_pop))
+
+ggplot(BinCounts, aes(x = factor(Month, levels = month_order_pop), y = Population_tagged, group = tankID, color = factor(tankID))) +
+  geom_line() +
+  geom_point() +
+  geom_jitter(height = 0.1, width = 0.25) +
+  facet_grid(.~Rack) +
+  theme_classic()
+
 #merge BinCounts and ds1
 ds1 <- left_join(ds1, BinCounts %>% dplyr::select("Month", "tankID", "Population"), by = c("Month", "tankID"))
 
@@ -366,6 +384,41 @@ ds1 <- ds1 %>%
 str(ds1)
 head(ds1)
 
+# check sex ratio of population
+tb_sexratio <- ds1[which(ds1$Month == "September"),] %>%
+  group_by_(
+    "Temp_class",
+    "Sex"
+  ) %>% 
+  count() 
+
+sexorder <- c("Immature", "Female", "Male")
+
+tb_sexratio$Sex <- as.character(tb_sexratio$Sex)
+tb_sexratio$Sex[tb_sexratio$Sex==""] <- NA
+tb_sexratio$Sex[is.na(tb_sexratio$Sex)] <- "Immature"
+tb_sexratio$Sex[tb_sexratio$Sex == "F"] <- "Female"
+tb_sexratio$Sex[tb_sexratio$Sex == "M"] <- "Male"
+tb_sexratio <- tb_sexratio %>%
+  mutate(
+    Sex = factor(Sex, levels = sexorder))
+
+fig3b1 <- ggplot(tb_sexratio, aes(x = " ", y = n,  fill = Sex)) +
+  geom_bar(position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("gold3", "darkgreen", "purple")) +
+  labs(x = "Whole Population", y = "Count (absolute)", fill = "Sex") +
+  theme_classic()
+
+fig3b2 <- ggplot(tb_sexratio, aes(x = factor(Temp_class), y = n, fill = Sex)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_fill_manual(values = c("gold3", "darkgreen", "purple")) +
+  labs(x = expression("Temperature ("*degree*C*")"), y = "Proportion", fill = "Sex") +
+  theme_classic()
+
+fig3b <- ggarrange(print(fig3b1), print(fig3b2), ncol = 2, nrow = 1, widths = c(1, 2), align = "v", common.legend = TRUE, legend = "right")
+
+fig3b
+
 ```
 
 <!----------------------------->
@@ -381,6 +434,10 @@ head(ds1)
 hist(ds1$mass) # plot all mass values to see mass range and most frequent values
 
 ds1$Month <- factor(ds1$Month, levels = month_order)              # reassign month_order to factor variable "Month" in ds1
+
+ds1$Sex[ds1$Sex == ""] <- NA
+ds1$Sex <- factor(ds1$Sex)
+
 
 # Plot mass over time, connect by ID_fish to show individual trends
 
@@ -433,7 +490,7 @@ plot(mass23_mod)                                    # residuals plot
 ```{r}
 
 # mass model including both temperature treatments, and their interaction with Month
-mass_mod <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density + (1 + Month_int|ID_fish), 
+mass_mod <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex  + Density + (1 + Month_int|ID_fish), 
                  data=ds1, REML=T)
 
 summary(mass_mod)   # generate model output
@@ -455,6 +512,13 @@ mass_mod_trtint <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density +
 summary(mass_mod_trtint)   # generate model output
 plot(mass_mod_trtint)      # residuals plot
 ranova(mass_mod_trtint)    # ANOVA table output to test random effects
+
+mass_mod_sex <- lmer(log_mass ~ Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*Month + (1 + Month_int|ID_fish), 
+                 data=ds1, REML=T)
+summary(mass_mod_sex)
+plot(mass_mod_sex)
+ranova(mass_mod_sex)
+
 
 ```
 
@@ -661,7 +725,7 @@ ranova(SMR23_mod_1)                                              # anova-like te
 ```{r}
 
 # model using log10 SMR and the interaction of log10 mass and temperature treatment
-SMR_mod <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1|ID_fish),  
+SMR_mod <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + Density + (1|ID_fish),  
                  data=ds1, REML=T)
 plot(SMR_mod)                                             # generate model output
 summary(SMR_mod)                                          # plot model residuals
@@ -690,6 +754,14 @@ plot(SMR_mod_trtint)                                             # generate mode
 summary(SMR_mod_trtint)                                          # plot model residuals
 ranova(SMR_mod_trtint)                                           # anova-like test for significance of model components
 
+
+# test sex terms for model inclusion
+
+SMR_mod_sex <- lmer(log10(SMR) ~ Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + (1 |ID_fish),  
+                 data=ds1, REML=T)
+plot(SMR_mod_sex)
+summary(SMR_mod_sex)
+ranova(SMR_mod_sex)
 ```
 
 Again, our ranova analysis shows that the random intercepts by ID_fish are not significant to this model. However, this will be retained because repeated measures were made on the same individuals, and so that the model can be included in the below covariance matrix.
@@ -755,7 +827,7 @@ At this stage, we have found a strong model for SMR which captures variance by t
 ```{r}
 
 # model using log10 RMR and the interaction of log10 mass and temperature treatment
-RMR_mod <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 |ID_fish),  
+RMR_mod <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + Density + (1 |ID_fish),  
                  data=ds1, REML=T)
 plot(RMR_mod)
 summary(RMR_mod)
@@ -781,6 +853,14 @@ RMR_mod_trt <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density 
 plot(RMR_mod_trt)
 summary(RMR_mod_trt)
 ranova(RMR_mod_trt)
+
+# test sex terms for model inclusion
+
+RMR_mod_sex <- lmer(log10(RMR) ~ Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + (1 |ID_fish),  
+                 data=ds1, REML=T)
+plot(RMR_mod_sex)
+summary(RMR_mod_sex)
+ranova(RMR_mod_sex)
 
 # plot RMR vs. log mass mean predicted level 
 
@@ -848,7 +928,7 @@ ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) +
 
 # model using log10 MMR and the interaction of log10 mass and temperature treatment
 
-MMR_mod <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 |ID_fish),  
+MMR_mod <- lmer(log10(MMR) ~ 0 + log_mass*as.factor(Temp_class) + as.factor(Sex) + Density + (1 |ID_fish),  
                  data=ds1, REML=T)
 
 plot(MMR_mod)
@@ -877,6 +957,12 @@ MMR_mod_trt <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density 
 plot(MMR_mod_trt)
 summary(MMR_mod_trt) 
 ranova(MMR_mod_trt)
+
+# test sex terms for model inclusion
+MMR_mod_sex <- lmer(log10(MMR) ~ 0 + as.factor(Sex):as.factor(Temp_class) + as.factor(Sex):as.factor(Temp_class):log_mass + Density + (1 |ID_fish),  
+                 data=ds1, REML=T)
+plot(MMR_mod_sex)
+summary(MMR_mod_sex)
 
 # plot MMR vs. log mass mean predicted level
 
@@ -1043,18 +1129,33 @@ dev.off()
 ```{r}
 
 #subset ds1 to only include fish for which fat mass was measured
-ds_fat <- ds1[which(!is.na(ds1$log_fatmass)),]
+ds_fat <- ds1[which(!is.na(ds1$log_fatmass) & ds1$Month == "September"),]
 
-fat_mod <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + Sex + Density, data=ds_fat)
+fat_mod <- lm(log_fatmass ~ Sex + Sex:log_finalmass_centre + Sex:Temp_class + Temp_class + log_finalmass_centre:Temp_class + Sex:Temp_class:log_finalmass_centre + Density, data=ds_fat)
 
-fat_mod1 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + SMR:Temp_class + Sex + Density, data=ds_fat)
+fat_mod1 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + SMR:Temp_class + Sex + Density, data=ds_fat) #using only final measurement of SMR here
 
-fat_mod2 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + RMR:Temp_class + Sex + Density, data=ds_fat)
+fat_mod2 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + RMR:Temp_class + Sex + Density, data=ds_fat) #using only final measurement of RMR here
 
-fat_mod3 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + MMR:Temp_class + Sex + Density, data=ds_fat)
+fat_mod3 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + MMR:Temp_class + Sex + Density, data=ds_fat) #using only final measurement of MMR here
 
 summary(fat_mod)   # generate model output
 plot(fat_mod)      # residuals plot
+anova(fat_mod)
+
+#Marginal Effects
+#Plotting marginal effects using the code Pete gave me
+require(ggeffects)
+pred.fat_mod <- ggpredict(fat_mod, terms = c("log_finalmass_centre", "Sex", "Temp_class"))
+plot(pred.fat_mod)
+
+ggplot() +
+  geom_line(data = pred.fat_mod, aes(x = x, y = predicted, color = group, group = group)) +
+  geom_ribbon(data = pred.fat_mod, aes(x= x, ymin = conf.low, ymax = conf.high, fill = group, group = group), alpha = 0.4) +
+  labs(x = expression(log[10]~(centred~mass~(g))), y = expression(log[10]~(fat~mass~(g))), color = expression("Sex")) +
+  theme_classic() +
+  scale_color_manual(values = c("darkgreen", "purple")) +
+  scale_fill_manual(values = c("darkgreen", "purple")) 
 
 summary(fat_mod1)   # generate model output
 plot(fat_mod)      # residuals plot
@@ -1071,9 +1172,18 @@ pred_fat <- ggpredict(fat_mod, terms = c("log_finalmass_centre", "Temp_class"))
 ggplot() +
   geom_point(data = ds_fat, aes(x = log_finalmass_centre, y = log_fatmass, group = factor(Temp_class), color = factor(Temp_class))) +
   geom_line(data = pred_fat, aes(x = x, y = predicted, color = group, group = group)) +
+  geom_ribbon(data = pred_fat, aes(x= x, ymin = conf.low, ymax = conf.high, fill = group, group = group), alpha = 0.4) +
   labs(x = expression(log[10]~(centred~mass~(g))), y = expression(log[10]~(fat~mass~(g))), color = expression("Temperature ("*degree*C*")")) +
   theme_classic() +
-  scale_color_manual(values = c("#78B7C5", "#F21A00")) 
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_fill_manual(values = c("#78B7C5", "#F21A00")) 
+
+
+ggplot(data = ds_fat, aes(y = Fat_mass_g, x = Sex, fill = factor(Sex))) +
+  scale_fill_manual(values = c("darkgreen", "purple")) +
+  geom_boxplot() +
+  labs(x = "Sex", y = "Fat mass (g)") +
+  theme_classic()
 
 # F test on interaction term
 anova(fat_mod)
@@ -1093,15 +1203,42 @@ This model is excluded from the following covariance matrix because we were only
 # COVARIANCE MATRIX
 
 <!----------------------------->
+## covariance matrix with only sex specific traits
+
+```{r}
+
+RN <- bf(mass1 ~ 0 + Sex:Temp_class + Sex:Temp_class:Month_centred_factor + Density + (1 + Month_centred |a| ID_fish)) + 
+      bf(SMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
+      bf(RMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
+      bf(MMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
+      set_rescor(T)
+
+prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
+            set_prior("cauchy(0,2)", class = "sd", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
+            set_prior("lkj(2)", class = "cor"))
+
+ fit0 <- brm(formula = RN, 
+            data = ds1, 
+            prior = prior1, 
+            seed = 42, warmup = 500, iter = 2000, chains = 4, cores = 4,
+            control=list(adapt_delta=0.97, max_treedepth = 15),
+            save_ranef = T
+           )
+ 
+print(fit0, digits = 3)
+plot(fit0)
+conditional_effects(fit0)
+
+```
 
 ## build covariance matrix with brms
 
 ```{r}
 
-RN <- bf(mass1 ~ 0 + Temp_class + Month_centred_factor:Temp_class + Sex + Density + (1 + Month_centred |a| ID_fish)) +
-      bf(SMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) +
-      bf(RMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) +
-      bf(MMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) +
+RN <- bf(mass1 ~ 0 + Temp_class + Month_centred_factor:Temp_class + Sex + Density + (1 + Month_centred |a| ID_fish)) + 
+      bf(SMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) + 
+      bf(RMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) + 
+      bf(MMR1  ~ 0 + Temp_class + log_mass_centre:Temp_class + Sex + Density + (1 |a| ID_fish)) + 
       set_rescor(T)
 
 prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
