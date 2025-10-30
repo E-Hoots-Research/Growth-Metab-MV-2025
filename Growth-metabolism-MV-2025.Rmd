@@ -42,7 +42,7 @@ Elizabeth C. Hoots
 
 Email: beth.hoots@research.deakin.edu.au
 
-GitHub: https://github.com/Bhoots99
+GitHub: https://github.com/E-Hoots-Research 
 
 Web: https://elizabeth-hoots.owlstown.net/
 
@@ -653,6 +653,17 @@ ggplot(ds1, aes(x = mass, y = SMR, group = ID_fish)) +          # plot raw SMR d
   facet_wrap(. ~ Temp_class) +                                  # produces one plot per temperature treatment
   theme_bw() 
 
+
+#SMR plotted over time, note that SMR is not mass-standardized and the mass range has changed over time as well.
+ggplot(ds1, aes(x = factor(Month), y = SMR, color = factor(Temp_class))) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), size = 2, alpha = 0.8) +
+  labs(x = "Month", y = expression(SMR~(mg~O[2]~h^-1)), color = "Temperature") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10()
+
+
 ```
 
 ## Visualize log-mass and SMR relationship
@@ -687,7 +698,7 @@ The trends become linear when SMR is presented on log scale
 ```{r}
 
 # model structure using log10 SMR and mass for fish at 18C only
-SMR18_mod<-lmer(log10(SMR) ~ log_mass + (1 |ID_fish), # random slopes by month, random intercepts by ID_fish
+SMR18_mod<-lmer(log10(SMR) ~ log_mass + (1 + Month_int|ID_fish), # random slopes by month, random intercepts by ID_fish
                  data=ds18, REML = T)
 
 summary(SMR18_mod)                                               # generate model output
@@ -723,7 +734,7 @@ ranova(SMR23_mod_1)                                              # anova-like te
 ```{r}
 
 # model using log10 SMR and the interaction of log10 mass and temperature treatment
-SMR_mod <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + Density + (1|ID_fish),  
+SMR_mod <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1|ID_fish),  
                  data=ds1, REML=T)
 plot(SMR_mod)                                             # generate model output
 summary(SMR_mod)                                          # plot model residuals
@@ -824,8 +835,17 @@ At this stage, we have found a strong model for SMR which captures variance by t
 
 ```{r}
 
+#RMR over time, note that month is found below to be insignificant as a random effect, and RMR plotted here is not mass-standardized.
+ggplot(ds1, aes(x = factor(Month), y = RMR, color = factor(Temp_class))) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), size = 2, alpha = 0.8) +
+  labs(x = "Month", y = expression(RMR~(mg~O[2]~h^-1)), color = "Temperature") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10()
+
 # model using log10 RMR and the interaction of log10 mass and temperature treatment
-RMR_mod <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Sex*as.factor(Temp_class) + Sex*as.factor(Temp_class)*log_mass + Density + (1 |ID_fish),  
+RMR_mod <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex  + Density + (1 |ID_fish),  
                  data=ds1, REML=T)
 plot(RMR_mod)
 summary(RMR_mod)
@@ -922,6 +942,15 @@ ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) +
 <!----------------------------->
 
 ```{r}
+
+#MMR over time, note that month is found below to be insignificant as a random effect, and MMR plotted here is not mass-standardized.
+ggplot(ds1, aes(x = factor(Month), y = MMR, color = factor(Temp_class))) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), size = 2, alpha = 0.8) +
+  labs(x = "Month", y = expression(MMR~(mg~O[2]~h^-1)), color = "Temperature") +
+  theme_bw() +
+  scale_color_manual(values = c("#78B7C5", "#F21A00")) +
+  scale_y_log10()
 
 # model using log10 MMR and the interaction of log10 mass and temperature treatment
 
@@ -1035,6 +1064,11 @@ fig2.1 <- ggplot() +
              alpha = 0.25, position = position_jitter(width = 0.1)) +
   labs(x = "log10(mass (g))", y = expression(SMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")")) +
   theme_classic() +
+  ## --- add isometric scaling lines ---
+  geom_abline(intercept = -1, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = -0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  ## ------------------------------------
   scale_color_manual(values = c("#78B7C5", "#F21A00")) +
   scale_fill_manual(values = c("#78B7C5", "#F21A00"), guide = "none") +
   xlim(-0.25, 1.1) +
@@ -1048,6 +1082,11 @@ fig2.2 <- ggplot() +
              alpha = 0.25, position = position_jitter(width = 0.1)) +
   labs(x = "log10(mass (g))", y = expression(RMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")")) +
   theme_classic() +
+  ## --- add isometric scaling lines ---
+  geom_abline(intercept = -1, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = -0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  ## ------------------------------------
   scale_color_manual(values = c("#78B7C5", "#F21A00")) +
   scale_fill_manual(values = c("#78B7C5", "#F21A00"), guide = "none") +
   xlim(-0.25, 1.1) +
@@ -1061,6 +1100,11 @@ fig2.3 <- ggplot() +
              alpha = 0.25, position = position_jitter(width = 0.1)) +
   labs(x = expression(log[10]~(mass~(g))), y = expression(MMR~(mg~O[2]~h^-1)), color = expression("Temperature ("*degree*C*")")) +
   theme_classic() +
+   ## --- add isometric scaling lines ---
+  geom_abline(intercept = -0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  ## ------------------------------------
   scale_color_manual(values = c("#78B7C5", "#F21A00")) +
   scale_fill_manual(values = c("#78B7C5", "#F21A00"), guide = "none") +
   xlim(-0.25, 1.1) +
@@ -1070,6 +1114,11 @@ fig2.4 <- ggplot(z_SMR, aes(x = log_mass, y = SMR, group = ID_fish)) +
   geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
             alpha = 0.6) +
   theme_classic() +
+  ## --- add isometric scaling lines ---
+  geom_abline(intercept = -1, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = -0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  ## ------------------------------------
   scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
   scale_y_log10(limits = c(0.15, 1.6))+
   xlim(-0.25, 1.1) +
@@ -1080,6 +1129,11 @@ fig2.5 <- ggplot(z_RMR, aes(x = log_mass, y = RMR, group = ID_fish)) +
   geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
             alpha = 0.6) +
   theme_classic() +
+  ## --- add isometric scaling lines ---
+  geom_abline(intercept = -1, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = -0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  ## ------------------------------------
   scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
   scale_y_log10(limits=c(0.25,2.1))+
   xlim(-0.25, 1.1) +
@@ -1089,6 +1143,11 @@ fig2.6 <- ggplot(z_MMR, aes(x = log_mass, y = MMR, group = ID_fish)) +
   geom_line(aes(y = pwr.fitted, color = `as.factor(Temp_class)`),      # note this will look odd if there are additional fixed effects      
             alpha = 0.6) +
   theme_classic() +
+  ## --- add isometric scaling lines ---
+  geom_abline(intercept = -0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_abline(intercept = 0.5, slope = 1, linetype = "dashed", color = "grey50") +
+  ## ------------------------------------
   scale_color_manual(values  = c("#78B7C5", "#F21A00")) +
   scale_y_log10(limits=c(0.5, 5))+
   xlim(-0.25, 1.1) +
@@ -1128,7 +1187,7 @@ dev.off()
 #subset ds1 to only include fish for which fat mass was measured
 ds_fat <- ds1[which(!is.na(ds1$log_fatmass) & ds1$Month == "September"),]
 
-fat_mod <- lm(log_fatmass ~ Sex + Sex:log_finalmass_centre + Sex:Temp_class + Temp_class + log_finalmass_centre:Temp_class + Sex:Temp_class:log_finalmass_centre + Density, data=ds_fat)
+fat_mod <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + Sex + Density, data=ds_fat)
 
 fat_mod1 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + SMR:Temp_class + Sex + Density, data=ds_fat) #using only final measurement of SMR here
 
@@ -1136,12 +1195,14 @@ fat_mod2 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + RMR:
 
 fat_mod3 <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + MMR:Temp_class + Sex + Density, data=ds_fat) #using only final measurement of MMR here
 
+fat_mod_sexlinked <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + Sex + Sex:Temp_class + Sex:log_finalmass_centre + Sex:Temp_class:log_finalmass_centre + Density, data=ds_fat)
+
 summary(fat_mod)   # generate model output
 plot(fat_mod)      # residuals plot
 anova(fat_mod)
 
 #Marginal Effects
-#Plotting marginal effects using the code Pete gave me
+#Plotting marginal effects 
 require(ggeffects)
 pred.fat_mod <- ggpredict(fat_mod, terms = c("log_finalmass_centre", "Sex", "Temp_class"))
 plot(pred.fat_mod)
@@ -1180,16 +1241,115 @@ ggplot(data = ds_fat, aes(y = Fat_mass_g, x = Sex, fill = factor(Sex))) +
   scale_fill_manual(values = c("darkgreen", "purple")) +
   geom_boxplot() +
   labs(x = "Sex", y = "Fat mass (g)") +
-  theme_classic()
+  theme_classic() +
+  facet_grid(.~Temp_class)
 
 # F test on interaction term
 anova(fat_mod)
 anova(fat_mod1)
 anova(fat_mod2)
 anova(fat_mod3)
-
+anova(fat_mod_sexlinked)
 
 ```
+
+## additional fat mass models to test alternative predictions:
+### Prediction 1: Individual fat mass is the product of cumulative metabolic performance over time, not just a single point.
+
+```{r}
+
+# first step: add six new summary variables to ds_fat
+
+ds_fat2 <- ds1 %>%
+  group_by(ID_fish, Temp_class, Sex, Fat_mass_g, log_fatmass, log_finalmass_centre, finalmass_centre, Final_Mass_g) %>%
+  summarise(
+    sum_SMR = sum(SMR, na.rm = TRUE),
+    mean_SMR = mean(SMR, na.rm = TRUE),
+    sum_RMR = sum(RMR, na.rm = TRUE),
+    mean_RMR = mean(RMR, na.rm = TRUE),
+    sum_MMR = sum(MMR, na.rm = TRUE),
+    mean_MMR = mean(MMR, na.rm = TRUE)
+  ) %>% drop_na()
+
+density <- ds1[which(ds1$Month == "September"),] %>% dplyr::select(ID_fish, Density)
+
+ds_fat2 <- left_join(ds_fat2, density, by = c("ID_fish"))
+
+ds_fat2 <- ds_fat2[which(ds_fat2$ID_fish != 99),] #Fish 99 is a clear outlier in the diagnostic plots. I have tested these models with and without it, and the results WRT the interaction terms between temperature:metabolism are unchanged.
+
+# now we build the new models.
+    # sum of metabolic trait models:
+
+fat_mod_sumSMR <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + sum_SMR:Temp_class + Sex + Density, data=ds_fat2)
+
+fat_mod_sumRMR <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + sum_RMR:Temp_class + Sex + Density, data=ds_fat2)
+
+fat_mod_sumMMR <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + sum_MMR:Temp_class + Sex + Density, data=ds_fat2)
+
+    # mean of metabolic trait models:
+
+fat_mod_meanSMR <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + mean_SMR:Temp_class + Sex + Density, data=ds_fat2)
+
+fat_mod_meanRMR <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + mean_RMR:Temp_class + Sex + Density, data=ds_fat2)
+
+fat_mod_meanMMR <- lm(log_fatmass ~ Temp_class + log_finalmass_centre:Temp_class + mean_MMR:Temp_class + Sex + Density, data=ds_fat2)
+
+# finally, we test those models using the summary function.
+
+plot(fat_mod_sumSMR)
+plot(fat_mod_sumRMR)
+plot(fat_mod_sumMMR)
+
+summary(fat_mod_sumSMR)
+summary(fat_mod_sumRMR)
+summary(fat_mod_sumMMR)
+
+anova(fat_mod_sumSMR)
+anova(fat_mod_sumRMR)
+anova(fat_mod_sumMMR)
+
+plot(fat_mod_meanSMR)
+plot(fat_mod_meanRMR)
+plot(fat_mod_meanMMR)
+
+summary(fat_mod_meanSMR)
+summary(fat_mod_meanRMR)
+summary(fat_mod_meanMMR)
+
+anova(fat_mod_meanSMR)
+anova(fat_mod_meanRMR)
+anova(fat_mod_meanMMR)
+
+#none of these models indicate that any cumulative metabolic trait at any temperature is significantly correlated with fat mass accumulation. Our results do not support Prediction 1.
+```
+
+### Prediction 2: Individual mass-specific metabolic performance will decrease with increasing fat mass, as fat tissue is not considered metabolically active.
+```{r}
+
+# first, we build three new models:
+
+SMR_fatmod <- lm(SMR ~ Temp_class + log_finalmass_centre:Temp_class + log_fatmass:Temp_class + Sex + Density, data=ds_fat)
+RMR_fatmod <- lm(RMR ~ Temp_class + log_finalmass_centre:Temp_class + log_fatmass:Temp_class + Sex + Density, data=ds_fat)
+MMR_fatmod <- lm(MMR ~ Temp_class + log_finalmass_centre:Temp_class + log_fatmass:Temp_class + Sex + Density, data=ds_fat)
+ 
+# then we test those models using the summary function.
+
+plot(SMR_fatmod)
+plot(RMR_fatmod)
+plot(MMR_fatmod)
+
+summary(SMR_fatmod)
+summary(RMR_fatmod)
+summary(MMR_fatmod)
+
+anova(SMR_fatmod)
+anova(RMR_fatmod)
+anova(MMR_fatmod)
+
+# here again, none of our models find any significant correlation between the interaction between temperature and fat mass with any metabolic trait. Our results do not support Prediction 2.
+
+```
+
 
 This model is excluded from the following covariance matrix because we were only able to collect one measurement of fat mass from each fish, all at the very end of the experiment. Without an initial measurement of fat mass (logistically impossible as it was a lethal measurement), we are unable to assess within-subject residual correlation. For this reason, we have assessed it separately.
 
@@ -1200,33 +1360,6 @@ This model is excluded from the following covariance matrix because we were only
 # COVARIANCE MATRIX
 
 <!----------------------------->
-## covariance matrix with only sex specific traits
-
-```{r}
-
-RN <- bf(mass1 ~ 0 + Sex:Temp_class + Sex:Temp_class:Month_centred_factor + Density + (1 + Month_centred |a| ID_fish)) + 
-      bf(SMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
-      bf(RMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
-      bf(MMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
-      set_rescor(T)
-
-prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
-            set_prior("cauchy(0,2)", class = "sd", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
-            set_prior("lkj(2)", class = "cor"))
-
- fit0 <- brm(formula = RN, 
-            data = ds1, 
-            prior = prior1, 
-            seed = 42, warmup = 500, iter = 6000, chains = 4, cores = 4,
-            control=list(adapt_delta=0.97, max_treedepth = 15),
-            save_ranef = T
-           )
- 
-print(fit0, digits = 3)
-plot(fit0)
-conditional_effects(fit0)
-
-```
 
 ## build covariance matrix with brms
 
@@ -1253,6 +1386,34 @@ prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR
 print(fit1, digits = 3)
 plot(fit1)
 conditional_effects(fit1)
+
+```
+
+## covariance matrix with only sex specific traits
+
+```{r}
+
+RN <- bf(mass1 ~ 0 + Sex:Temp_class + Sex:Temp_class:Month_centred_factor + Density + (1 + Month_centred |a| ID_fish)) + 
+      bf(SMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
+      bf(RMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
+      bf(MMR1  ~ 0 + Sex:Temp_class + Sex:Temp_class:log_mass_centre + Density + (1 |a| ID_fish)) + 
+      set_rescor(T)
+
+prior1 <- c(set_prior("normal(0,2)", class = "b", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
+            set_prior("cauchy(0,2)", class = "sd", resp = c("mass1", "SMR1", "RMR1","MMR1")), 
+            set_prior("lkj(2)", class = "cor"))
+
+ fit0 <- brm(formula = RN, 
+            data = ds1, 
+            prior = prior1, 
+            seed = 42, warmup = 500, iter = 6000, chains = 4, cores = 4,
+            control=list(adapt_delta=0.97, max_treedepth = 15),
+            save_ranef = T
+           )
+ 
+print(fit0, digits = 3)
+plot(fit0)
+conditional_effects(fit0)
 
 ```
 
