@@ -506,7 +506,7 @@ plot(mass_mod_noMonth)      # residuals plot
 ranova(mass_mod_noMonth)    # ANOVA table output to test random effects
 
 # mass model with random intercepts by temp treatment
-mass_mod_trtint <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density + (0 + Month_int|Temp_class), 
+mass_mod_trtint <- lmer(log_mass ~ Month*as.factor(Temp_class) + Sex + Density + (0 + Temp_class|ID_fish), 
                  data=ds1, REML=T)
 
 summary(mass_mod_trtint)   # generate model output
@@ -763,6 +763,12 @@ plot(SMR_mod_trtint)                                             # generate mode
 summary(SMR_mod_trtint)                                          # plot model residuals
 ranova(SMR_mod_trtint)                                           # anova-like test for significance of model components
 
+#model random slopes by mass
+SMR_mod_mass <- lmer(log10(SMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 + log_mass|ID_fish),  
+                 data=ds1, REML=T)
+plot(SMR_mod_mass)                                             # generate model output
+summary(SMR_mod_mass)                                          # plot model residuals
+ranova(SMR_mod_mass)                                           # anova-like test for significance of model components
 
 # test sex terms for model inclusion
 
@@ -871,6 +877,13 @@ RMR_mod_trt <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density 
 plot(RMR_mod_trt)
 summary(RMR_mod_trt)
 ranova(RMR_mod_trt)
+
+#model random slopes by mass
+RMR_mod_mass <- lmer(log10(RMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 + log_mass|ID_fish),  
+                 data=ds1, REML=T)
+plot(RMR_mod_mass)                                             # generate model output
+summary(RMR_mod_mass)                                          # plot model residuals
+ranova(RMR_mod_mass)                                           # anova-like test for significance of model components
 
 # test sex terms for model inclusion
 
@@ -983,6 +996,14 @@ MMR_mod_trt <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density 
 plot(MMR_mod_trt)
 summary(MMR_mod_trt) 
 ranova(MMR_mod_trt)
+
+#model random slopes by mass
+MMR_mod_mass <- lmer(log10(MMR) ~ log_mass*as.factor(Temp_class) + Sex + Density + (1 + log_mass|ID_fish),  
+                 data=ds1, REML=T)
+plot(MMR_mod_mass)                                             # generate model output
+summary(MMR_mod_mass)                                          # plot model residuals
+ranova(MMR_mod_mass)                                           # anova-like test for significance of model components
+
 
 # test sex terms for model inclusion
 MMR_mod_sex <- lmer(log10(MMR) ~ 0 + as.factor(Sex):as.factor(Temp_class) + as.factor(Sex):as.factor(Temp_class):log_mass + Density + (1 |ID_fish),  
@@ -1353,6 +1374,15 @@ anova(MMR_fatmod)
 
 This model is excluded from the following covariance matrix because we were only able to collect one measurement of fat mass from each fish, all at the very end of the experiment. Without an initial measurement of fat mass (logistically impossible as it was a lethal measurement), we are unable to assess within-subject residual correlation. For this reason, we have assessed it separately.
 
+```{r}
+ds1 <- ds1 %>% 
+  mutate(
+    Sex = as.character(Sex),
+    Sex = if_else(is.na(Sex), " ", Sex),
+    Sex = as.factor(Sex))
+
+
+```
 
 
 <!----------------------------->
@@ -1387,6 +1417,14 @@ print(fit1, digits = 3)
 plot(fit1)
 conditional_effects(fit1)
 
+```
+
+```{r}
+ds1 <- ds1 %>% 
+  mutate(
+    Sex = as.character(Sex),
+    Sex = if_else(Sex == " ", NA, Sex), 
+    Sex = as.factor(Sex))
 ```
 
 ## covariance matrix with only sex specific traits
